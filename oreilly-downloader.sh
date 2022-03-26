@@ -67,7 +67,7 @@ BOOK="${CURDIR}/${TITLE}.epub"
 if [[ "${print_pdf}" = true ]]
 then
     ebook-convert "$BOOK" "$TITLE".pdf
-    mv "$TITLE" "$output_pdf/$TITLE"
+    mv "$TITLE" "$output_pdf/$TITLE".pdf
 fi
 
 if [[ "${print_epub}" = true ]]
