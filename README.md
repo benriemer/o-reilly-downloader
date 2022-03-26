@@ -88,8 +88,9 @@ Copy the ID of the book (in this case `9780321635754`)
 And then run following command in the directory where you download the script
 
 ```sh
-bash oreilly-downloader.sh -b `9780321635754` -t art-of-computer -f pdf|epub|both
+bash oreilly-downloader.sh -b `9780321635754` -t art-of-computer -f pdf || epub || both 
 ```
+*only one argument is required to set data type*
 <br>
 
 | syntax  | argument  | explanation                                                         | example                       
@@ -130,7 +131,7 @@ mv user.conf.sample data/user.conf
 ### Downloading every book by executing following command: ###
 
 ```sh
-bash oreilly-downloader.sh -b `9780321635754` -t art-of-computer -f pdf|epub|both
+bash oreilly-downloader.sh -b `9780321635754` -t art-of-computer -f pdf || epub || both
 ```
 <br>
 <br>

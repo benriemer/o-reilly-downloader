@@ -1,0 +1,4 @@
+.vscode/
+# ignore secret file
+data/user.conf
+download/
