@@ -67,16 +67,14 @@ BOOK="${CURDIR}/${TITLE}.epub"
 if [[ "${print_pdf}" = true ]]
 then
     ebook-convert "$BOOK" "$TITLE".pdf
-    mv "$TITLE" "$output_pdf/$TITLE".pdf
+    mv "${CURDIR}/$TITLE".pdf "$output_pdf/$TITLE".pdf
 fi
 
 if [[ "${print_epub}" = true ]]
 then
     mv "$BOOK" "$output_epub/$BOOK"
-elif [[ "${print_epub}" = false ]]
-then
-    rm "$BOOK"
 fi
 
+rm "$BOOK"
 docker container rm -f "$TITLE"
 echo "$BOOKTITLE downloaded successfully"
