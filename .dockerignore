@@ -1,0 +1,11 @@
+.venv/
+.venv-sys/
+download/
+*.epub
+*.pdf
+course_page.html
+debug_course_page.html
+debug_course_final.html
+__pycache__/
+*.pyc
+.git/

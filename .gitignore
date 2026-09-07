@@ -1,4 +1,21 @@
-.vscode/
-# ignore secret file
-data/user.conf
+# Sensitive files — never commit
+cookies.json
+cookies_full.json
+user.conf
+data/cookies.json
+
+# Downloaded content
 download/
+*.epub
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.venv-sys/
+
+# stray artifacts
+*-debug-*.html
+course_page.html
+debug_*.html
