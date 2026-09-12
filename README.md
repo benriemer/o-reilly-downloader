@@ -223,7 +223,7 @@ The image is based on `kirinnee/orly:latest` (Debian 12 / Bookworm) and includes
 - **ffmpeg** — HLS video download
 - **calibre** (`ebook-convert`) — EPUB to PDF conversion
 - **Playwright + requests** — Python browser automation and API calls
-- **sso wrapper + safaribooks-v2.py** — book download via O'Reilly API v2
+- **safaribooks-v2.py** — book download via O'Reilly API v2 with cookie auth
 
 The image is ~4 GB. Build time is ~5-10 minutes depending on network speed.
 

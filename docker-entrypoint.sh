@@ -78,7 +78,7 @@ fi
 
 case "$COMMAND" in
     book)
-        # Book download — uses safaribooks-v2.py + the sso wrapper (container-native)
+        # Book download — uses safaribooks-v2.py + calibre (container-native)
         exec bash "${CURDIR}/oreilly-downloader-container.sh" "$@"
         ;;
 
@@ -92,14 +92,14 @@ case "$COMMAND" in
         fi
         shift
 
-        # Use cookies_full.json if available, otherwise cookies.json
-        if [[ -f "$COOKIES_FULL" ]]; then
-            echo "Using full cookies from cookies_full.json"
-        else
-            echo "Warning: cookies_full.json not found, using cookies.json"
+        # Course downloads specifically need cookies_full.json (HttpOnly cookies)
+        if [[ ! -f "$COOKIES_FULL" ]]; then
+            echo "Error: cookies_full.json not found."
             echo "  Course downloads need full cookies (including HttpOnly sessionid)."
-            echo "  Run 'docker run --rm ... oreilly-downloader login' to get them."
+            echo "  Run './oreilly.sh login' to capture them."
+            exit 1
         fi
+        echo "Using full cookies from cookies_full.json"
 
         exec python3 "${CURDIR}/oreilly-course-downloader.py" "$COURSE_URL" "$@"
         ;;

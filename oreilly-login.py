@@ -11,7 +11,7 @@ import time
 import os
 from playwright.sync_api import sync_playwright
 
-CHROME_PATH = "/usr/bin/google-chrome"
+CHROME_PATH = os.environ.get("CHROME_PATH", "/usr/bin/google-chrome")
 OUTPUT_FILE = "cookies_full.json"
 
 def main():

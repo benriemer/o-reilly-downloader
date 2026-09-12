@@ -59,7 +59,7 @@ if [[ "$print_pdf" = true ]] && ! command -v ebook-convert >/dev/null 2>&1; then
     echo "Error: 'ebook-convert' (calibre) required for PDF output."; exit 1
 fi
 
-# sso wrapper writes cookies.json + reads safaribooks.py from CWD, so use a temp dir
+# Run safaribooks.py directly (bypass sso wrapper which has cookie piping issues)
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 cp "$safaribooks_patched" "$WORKDIR/safaribooks.py"
@@ -70,8 +70,17 @@ export OPENSSL_CONF="$tls12_conf"
 BOOK="${APPDIR}/${TITLE}.epub"
 echo "Downloading book $BOOKTITLE..."
 
-# sso reads cookies from stdin, runs safaribooks.py, outputs epub to stdout
-(cd "$WORKDIR" && cat cookies.json | sso "$BOOKTITLE") > "$BOOK"
+(cd "$WORKDIR" && python3 safaribooks.py "$BOOKTITLE")
+
+# Find the generated epub
+EPUB=$(find "$WORKDIR" -name "${BOOKTITLE}.epub" -print -quit)
+if [[ -z "$EPUB" ]]; then
+    echo "Error: download failed - no epub file generated."
+    echo "  1. Cookies expired — re-extract from browser"
+    echo "  2. Wrong book ID"
+    exit 1
+fi
+cp "$EPUB" "$BOOK"
 
 # Validate: real epub starts with PK zip magic
 if [[ ! -s "$BOOK" ]] || ! head -c 4 "$BOOK" | grep -q $'PK\x03\x04'; then
@@ -81,15 +90,26 @@ if [[ ! -s "$BOOK" ]] || ! head -c 4 "$BOOK" | grep -q $'PK\x03\x04'; then
     rm -f "$BOOK"; exit 1
 fi
 
-if [[ "${print_pdf}" = true ]]; then
-    echo "Converting to PDF..."
-    ebook-convert "$BOOK" "${APPDIR}/${TITLE}.pdf"
-    mv "${APPDIR}/${TITLE}.pdf" "${output_pdf}/${TITLE}.pdf"
-fi
-
+# Save EPUB first so PDF conversion failure doesn't lose it
 if [[ "${print_epub}" = true ]]; then
     mv "$BOOK" "${output_epub}/${TITLE}.epub"
+    BOOK="${output_epub}/${TITLE}.epub"
 else
+    cp "$BOOK" "${APPDIR}/${TITLE}.epub"
+    BOOK="${APPDIR}/${TITLE}.epub"
+fi
+
+if [[ "${print_pdf}" = true ]]; then
+    echo "Converting to PDF..."
+    if QTWEBENGINE_DISABLE_SANDBOX=1 ebook-convert "$BOOK" "${output_pdf}/${TITLE}.pdf" 2>&1; then
+        echo "PDF conversion complete"
+    else
+        echo "Warning: PDF conversion failed (EPUB was saved)"
+    fi
+fi
+
+# Clean up temp epub copy if epub wasn't requested
+if [[ "${print_epub}" != true ]]; then
     rm -f "$BOOK"
 fi
 

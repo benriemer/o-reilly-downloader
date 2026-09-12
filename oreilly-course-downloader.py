@@ -85,7 +85,7 @@ def scrape_course_structure(page, course_url):
     """
     print(f"  Navigating to course page...")
     page.goto(course_url, wait_until="domcontentloaded", timeout=60000)
-    time.sleep(5)
+    time.sleep(8)
 
     # Scroll to bottom to trigger lazy loading
     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -95,8 +95,13 @@ def scrape_course_structure(page, course_url):
     print("  Expanding course chapters...")
     page.evaluate("""
     () => {
-        const headers = document.querySelectorAll('button.MuiAccordionSummary-root');
+        const headers = document.querySelectorAll('button[aria-expanded="false"]');
         headers.forEach(h => {
+            try { h.click(); } catch(e) {}
+        });
+        // Also try MuiAccordion headers
+        const muiHeaders = document.querySelectorAll('button.MuiAccordionSummary-root');
+        muiHeaders.forEach(h => {
             if (h.getAttribute('aria-expanded') !== 'true' && !h.classList.contains('Mui-expanded')) {
                 h.click();
             }
@@ -109,59 +114,57 @@ def scrape_course_structure(page, course_url):
     structure = page.evaluate("""
     () => {
         const result = {};
+        const isVideoLink = (href) => {
+            if (!href) return false;
+            if (href.includes('/continue/') || href.includes('/start/')) return false;
+            return href.includes('/videos/') && /\\d{10,13}-[a-zA-Z0-9_-]+/.test(href);
+        };
+        const cleanTitle = (text) => {
+            return (text || '').trim()
+                .replace(/Complete$/i, '')
+                .replace(/\\d+[smh](\\s+\\d+[sm])?(\\s*remaining)?\\s*$/i, '')
+                .replace(/\\d+m\\s+\\d+s$/i, '')
+                .replace(/\\d+h\\s+\\d+m\\s+\\d+s$/i, '')
+                .replace(/\\d+h\\s+\\d+m$/i, '')
+                .trim();
+        };
+
         const headers = document.querySelectorAll('button.MuiAccordionSummary-root');
-        
+
         if (headers.length === 0) {
             // Fallback: find all video links directly
             const allLinks = Array.from(document.querySelectorAll('a'))
-                .filter(a => {
-                    const href = a.getAttribute('href') || '';
-                    if (href.includes('/continue/') || href.includes('/start/')) return false;
-                    return href.includes('/videos/') && href.includes('-video');
-                });
-            
+                .filter(a => isVideoLink(a.getAttribute('href')));
+
             const videos = allLinks.map(link => ({
-                title: (link.textContent || '').trim()
-                    .replace(/Complete$/i, '')
-                    .replace(/\\d+[smh](\\s+\\d+[sm])?(\\s*remaining)?\\s*$/i, '')
-                    .replace(/\\d+m\\s+\\d+s$/i, '')
-                    .trim(),
+                title: cleanTitle(link.textContent),
                 url: link.href
             })).filter(v => v.title && v.url);
-            
+
             if (videos.length > 0) result['Course Content'] = videos;
             return result;
         }
-        
+
         for (let i = 0; i < headers.length; i++) {
             const header = headers[i];
             let moduleTitle = '';
             const heading = header.querySelector('h3, h4, h5, h2');
             moduleTitle = heading ? heading.textContent.trim() : (header.textContent || '').trim();
             moduleTitle = moduleTitle.split('\\n')[0].trim() || `Chapter ${i + 1}`;
-            
+
             const controlsId = header.getAttribute('aria-controls');
             let panel = controlsId ? document.getElementById(controlsId) : null;
             if (!panel) panel = header.nextElementSibling;
-            
+
             if (panel) {
                 const links = Array.from(panel.querySelectorAll('a'))
-                    .filter(a => {
-                        const href = a.getAttribute('href') || '';
-                        if (href.includes('/continue/') || href.includes('/start/')) return false;
-                        return href.includes('/videos/') && href.includes('-video');
-                    });
-                
-                const videos = links.map(link => {
-                    let title = (link.textContent || '').trim()
-                        .replace(/Complete$/i, '')
-                        .replace(/\\d+[smh](\\s+\\d+[sm])?(\\s*remaining)?\\s*$/i, '')
-                        .replace(/\\d+m\\s+\\d+s$/i, '')
-                        .replace(/\\d+m\\s+\\d+s$/i, '')
-                        .trim();
-                    return { title: title, url: link.href };
-                }).filter(v => v.title && v.url);
-                
+                    .filter(a => isVideoLink(a.getAttribute('href')));
+
+                const videos = links.map(link => ({
+                    title: cleanTitle(link.textContent),
+                    url: link.href
+                })).filter(v => v.title && v.url);
+
                 if (videos.length > 0) result[moduleTitle] = videos;
             }
         }
@@ -174,15 +177,16 @@ def scrape_course_structure(page, course_url):
 
 def extract_clip_id(video_url):
     """Extract the O'Reilly video clip ID from a URL.
-    e.g. /videos/-/0642572077884/0642572077884-video381607/
-    -> 0642572077884-video381607
+    Supports both formats:
+      /videos/-/0642572077884/0642572077884-video381607/  (numeric suffix)
+      /videos/-/9781807785192/9781807785192-video1_1/      (underscore suffix)
     """
-    # Match pattern: {digits}-video{digits}
-    match = re.search(r'(\d{10,13}-video\d+)', video_url)
+    # Match pattern: {digits}-video{digits} optionally followed by _{digits}
+    match = re.search(r'(\d{10,13}-video\d+(?:_\d+)?)', video_url)
     if match:
         return match.group(1)
-    # Fallback: ISBN-like pattern
-    match = re.search(r'\b(\d{10,13}-[a-zA-Z0-9_-]+)\b', video_url)
+    # Fallback: ISBN-like pattern (e.g. 9780135887837-aaic1_01_01_01)
+    match = re.search(r'\b(\d{10,13}-[a-zA-Z0-9_]+)\b', video_url)
     if match:
         return match.group(1)
     return None
