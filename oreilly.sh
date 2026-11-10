@@ -27,6 +27,8 @@ fi
 # For login command, mount the output directory for saving cookies + X11
 if [[ "${1:-}" == "login" ]]; then
     exec docker run --rm --interactive \
+        --user $(id -u):$(id -g) \
+        -w /app/output \
         -e DISPLAY="${DISPLAY:-}" \
         -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
         -v "${SCRIPT_DIR}":/app/output \

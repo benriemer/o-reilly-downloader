@@ -1,0 +1,14 @@
+{
+  "name": "shelf-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Private web interface for the O'Reilly downloader CLI",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/*.test.js"
+  }
+}

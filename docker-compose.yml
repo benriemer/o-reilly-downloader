@@ -1,0 +1,106 @@
+# =============================================================================
+# Shelf — web UI + internal downloader worker
+#
+#   docker compose up -d
+#
+# The web port binds to loopback by default. The worker API has no published
+# port and is only reachable from the web container on the Compose network.
+# =============================================================================
+
+name: shelf
+
+services:
+  downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${DOWNLOADER_IMAGE:-oreilly-downloader:latest}
+    entrypoint: ['python3', '/app/worker.py']
+    init: true
+    restart: unless-stopped
+    shm_size: '1gb'
+    stop_grace_period: 30s
+    environment:
+      WORKER_HOST: 0.0.0.0
+      WORKER_PORT: '8081'
+      DOWNLOAD_DIR: /app/download
+      CONFIG_DIR: /config
+      DATA_DIR: /data
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      MAX_CONCURRENT: ${MAX_CONCURRENT:-1}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./download:/app/download:z
+      - ./config:/config:ro,z
+      - downloader-data:/data
+    networks:
+      - shelf
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/api/health', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    image: ${WEB_IMAGE:-shelf-web:latest}
+    restart: unless-stopped
+    user: '${LOCAL_UID:-1000}:${LOCAL_GID:-1000}'
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PORT: '3000'
+      HOST: 0.0.0.0
+      DOWNLOADS_DIR: /downloads
+      CONFIG_DIR: /config
+      WORKER_URL: http://downloader:8081
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      MAX_CONCURRENT: ${MAX_CONCURRENT:-1}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-604800}
+      APP_VERSION: '1.0.0'
+      TZ: ${TZ:-UTC}
+    ports:
+      - '${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3000}:3000'
+    volumes:
+      - ./download:/downloads:ro,z
+      - ./config:/config:z
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      - shelf
+    depends_on:
+      downloader:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  downloader-data:
+
+networks:
+  shelf:
+    driver: bridge

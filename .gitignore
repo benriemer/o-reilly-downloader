@@ -1,19 +1,31 @@
 # Sensitive files — never commit
 cookies.json
 cookies_full.json
+config/*.json
 user.conf
-data/cookies.json
+data/
+.env
+.env.*
+!.env.example
 
 # Downloaded content
 download/
 *.epub
 *.pdf
 
+# Node
+web/node_modules/
+npm-debug.log*
+
+# Local state
+*.log
+
 # Python
 __pycache__/
 *.pyc
 .venv/
 .venv-sys/
+.pytest_cache/
 
 # stray artifacts
 *-debug-*.html

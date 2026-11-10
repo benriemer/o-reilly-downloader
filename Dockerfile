@@ -59,6 +59,7 @@ COPY oreilly-course-downloader.py .
 COPY oreilly-login.py .
 COPY retrieve_cookies.py .
 COPY docker-entrypoint.sh .
+COPY downloader/worker.py /app/worker.py
 
 # Make scripts executable
 RUN chmod +x oreilly-downloader.sh oreilly-downloader-container.sh docker-entrypoint.sh
