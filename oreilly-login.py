@@ -73,8 +73,8 @@ def main():
 
         print(f"O'Reilly cookies: {len(oreilly_cookies)}")
         for name in sorted(oreilly_cookies.keys()):
-            val = oreilly_cookies[name]
-            print(f"  {name}: {val[:30]}..." if len(val) > 30 else f"  {name}: {val}")
+            # Never print cookie values; terminal scrollback and CI logs leak.
+            print(f"  {name}")
 
         # Check for critical cookies
         critical = ["orm-jwt", "sessionid", "groot_sessionid"]

@@ -1,283 +1,539 @@
-<p align="center">
-  <a href="" rel="noopener">
- <img width=200px height=200px src="https://www.codegrepper.com/profile_images/577485_lnuxr2sSE6gZJmlrr5h9oITqE8lUbMPCpaFSel94VRGDIK8N5Zbthqn.png" alt="Project logo"></a>
-</p>
+# Shelf
 
-<h1 align="center">O-Reilly-Downloader</h1>
-<br>
-<br>
-<div align="center">
+A private, local-first web interface and Docker Compose deployment for
+[benriemer/o-reilly-downloader](https://github.com/benriemer/o-reilly-downloader).
+Shelf queues book and course downloads, streams progress and logs, manages
+authentication cookies, and serves the finished library from one small dark UI.
 
-[![Status](https://img.shields.io/badge/status-active-success.svg)]()
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](/LICENSE)
-<br>
+The original downloader CLI is unchanged. Shelf runs it inside an isolated
+worker container and talks to it through a lightweight internal adapter.
 
-</div>
+> **Authorized content only.** Use Shelf with an active O'Reilly subscription
+> and only for material you are licensed to download. Shelf does not bypass
+> DRM, paywalls, or access controls.
 
 ---
 
-<p align="center">Download e-books (EPUB/PDF) and video courses (MP4 + transcripts) from O'Reilly Learning
-    <br>
-</p>
-<br>
-<br>
-<br>
+## Contents
 
-## Table of Contents
-
-- [About](#about)
-- [Docker Quick Start](#docker_quick_start)
-- [Prerequisites](#prerequisites)
-- [Cookie Authentication](#cookie_auth)
-- [Downloading Books](#downloading_books)
-- [Downloading Courses](#downloading_courses)
-- [Interactive Login (Full Cookies)](#login)
-- [Building the Docker Image](#building)
+- [What you get](#what-you-get)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Using Shelf](#using-shelf)
+- [Cookie setup](#cookie-setup)
+- [Library and volumes](#library-and-volumes)
+- [Security model](#security-model)
+- [Reverse proxy and HTTPS](#reverse-proxy-and-https)
+- [Development and tests](#development-and-tests)
+- [CLI usage](#cli-usage)
 - [Troubleshooting](#troubleshooting)
-- [Special Thanks](#special_thanks)
-- [Authors](#authors)
+- [Project layout](#project-layout)
+- [Acknowledgments](#acknowledgments)
 
-<br><br>
+---
 
-## About <a name = "about"></a>
+## What you get
 
-A unified Docker-based CLI to download **books** (EPUB/PDF) and **video courses** (MP4 + transcripts) from <https://learning.oreilly.com/>.
+- **Async download queue** for books (EPUB/PDF) and video courses
+  (MP4 + transcripts), with concurrency controls.
+- **Live job view** with progress, status, sanitized logs, cancellation, and
+  one-click retry.
+- **Library browser** for books and courses, with direct file downloads and
+  byte-range streaming for media players.
+- **Cookie management** in Settings, including validity metadata and file age.
+  Cookie values are never returned to the browser or written to logs.
+- **Two-container isolation**: the web app cannot run downloads directly, and
+  the downloader API has no published port.
+- **Local-only by default**: the UI binds to `127.0.0.1` and can optionally be
+  password protected.
 
-The entire toolchain runs inside a single Docker image — no host-side Python, Playwright, ffmpeg, or calibre installation required.
+The downloader image is large (roughly 4 GB) because it includes Chromium,
+ffmpeg, calibre, and Playwright. The first build takes about 5–10 minutes.
 
-<br><br>
+---
 
-## Docker Quick Start <a name = "docker_quick_start"></a>
+## Quick start
+
+Prerequisites:
+
+- Docker with the Compose plugin
+- An active O'Reilly subscription
+- Cookies for the content you want to download
+
+Start the stack:
 
 ```bash
-# 1. Build the image
-docker build -t oreilly-downloader:latest .
+git clone https://github.com/benriemer/o-reilly-downloader.git
+cd o-reilly-downloader
 
-# 2. Get cookies (see Cookie Authentication below)
+cp .env.example .env
+# Recommended: set APP_PASSWORD and SESSION_SECRET in .env (see below).
 
-# 3. Download a book
-./oreilly.sh book -b 0642572274566 -t the-agentic-enterprise -f both
-
-# 4. Download a video course
-./oreilly.sh course "https://learning.oreilly.com/course/building-ai-agents/0642572077884/"
+docker compose up -d --build
 ```
 
-The wrapper script `oreilly.sh` handles volume mounts automatically. You can also use `docker run` directly — see below.
+Open <http://127.0.0.1:3000>.
 
-<br><br>
+On first use:
 
-## Prerequisites <a name = "prerequisites"></a>
+1. Go to **Settings → Cookie files** and add `cookies.json` (books) and/or
+   `cookies_full.json` (courses). See [Cookie setup](#cookie-setup).
+2. Go to **New download**, choose a book or course, and start the job.
+3. Follow progress under **Activity**. Finished files appear in **Library**.
 
-- **Docker** — the only host-side requirement
-- **O'Reilly subscription** — an active account with access to the content you want to download
-- **Cookies** — see [Cookie Authentication](#cookie_auth)
+Useful commands:
 
-> No need to install Python, Playwright, Chromium, ffmpeg, or calibre on the host.
-> Everything runs inside the Docker container.
+```bash
+docker compose ps
+docker compose logs -f web
+docker compose logs -f downloader
+docker compose down            # keep downloads, cookies, and job history
+docker compose down -v         # also remove job history (named volume)
+```
 
-<br><br>
+`docker compose down` does **not** delete `./download`, `./config`, or the
+`downloader-data` volume unless you pass `-v`.
 
-## Cookie Authentication <a name = "cookie_auth"></a>
+---
 
-> **Important:** O'Reilly no longer allows username/password login via scripts.
-> Authentication is done via browser cookies.
+## Configuration
 
-### For Books: `cookies.json`
+Copy `.env.example` to `.env` and adjust:
 
-1. Log in at <https://learning.oreilly.com> in your browser
-2. Open the developer console (`F12`) on that page
-3. Run this JavaScript and copy the output:
+```bash
+cp .env.example .env
+```
+
+Generate secrets with:
+
+```bash
+openssl rand -base64 24   # APP_PASSWORD
+openssl rand -hex 32      # SESSION_SECRET
+openssl rand -hex 32      # INTERNAL_API_TOKEN (optional)
+```
+
+### Web access
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `WEB_BIND` | `127.0.0.1` | Host interface for the web port. Keep loopback unless you put a password-protected reverse proxy in front. |
+| `WEB_PORT` | `3000` | Host port for the web UI. |
+| `APP_PASSWORD` | empty | Enables the login screen when set. Empty means local-only mode with no login. |
+| `SESSION_SECRET` | random per start | Signs session cookies. Set it to keep sessions across restarts. |
+| `SESSION_TTL_SECONDS` | `604800` | Session lifetime (7 days). Minimum 15 minutes. |
+| `COOKIE_SECURE` | `0` | Set to `1` when the UI is served over HTTPS. |
+| `TRUST_PROXY` | `0` | Set to `1` only behind a reverse proxy that supplies `X-Forwarded-*` headers. |
+
+If `APP_PASSWORD` is empty, Shelf starts in **local-only mode**: anyone who can
+reach the port has full access, so do not expose it beyond loopback. If you set
+`APP_PASSWORD`, all API routes require a signed session cookie.
+
+### Downloader
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `INTERNAL_API_TOKEN` | empty | Optional shared secret between web and worker. The worker port is never published either way. |
+| `MAX_CONCURRENT` | `1` | Simultaneous download jobs (capped at 4 by the worker). `1` is recommended. |
+| `TZ` | `UTC` | Timezone for logs and timestamps. |
+| `LOCAL_UID` / `LOCAL_GID` | `1000` / `1000` | Host UID/GID the web container uses to write `./config`. Match with `id -u` / `id -g`. |
+
+Image overrides are available as `DOWNLOADER_IMAGE` and `WEB_IMAGE`.
+
+---
+
+## Architecture
+
+```text
+                 ┌──────────────────────────── host ───────────────────────────┐
+                 │                                                             │
+  Browser ──────▶│  web :3000 (published on 127.0.0.1 by default)              │
+                 │   • static UI + JSON API                                    │
+                 │   • password/session auth                                   │
+                 │   • library index and file streaming (read-only)            │
+                 │   • cookie status; writes cookie files                      │
+                 │            │ internal HTTP + optional token                 │
+                 │            ▼                                                │
+                 │  downloader :8081 (no published port)                       │
+                 │   • worker.py queue, progress parser, log redaction         │
+                 │   • invokes the unchanged upstream CLI:                     │
+                 │       docker-entrypoint.sh book|course                      │
+                 │                                                             │
+                 │  ./download ◀── both containers ──▶ ./config                │
+                 │  downloader-data (named volume: job history)                │
+                 └─────────────────────────────────────────────────────────────┘
+```
+
+- **web** is a zero-dependency Node 22 server and vanilla ES-module frontend.
+  It runs read-only with all capabilities dropped.
+- **downloader** contains the original upstream scripts plus
+  `downloader/worker.py`, a small adapter that manages subprocesses and exposes
+  only an internal API. It does **not** receive the Docker socket.
+- The worker links the shared cookie files into the paths the upstream scripts
+  expect, so the original download logic remains untouched.
+
+---
+
+## Using Shelf
+
+### New download
+
+- **Book**: enter the numeric book ID from the O'Reilly URL, a filesystem-safe
+  title, and choose PDF, EPUB, or both. Example ID: `9780321635754`.
+- **Course**: paste the course URL, for example
+  `https://learning.oreilly.com/course/building-ai-agents/0642572077884/`.
+  Transcripts-only mode is available.
+
+The queue persists job metadata in the `downloader-data` volume. Queued jobs
+resume after a restart; jobs that were running are marked interrupted, so use
+**Retry** to run them again. Existing course videos are skipped by the upstream
+downloader, so retries resume rather than start over.
+
+### Activity
+
+The job detail view shows status, timing, exit code, progress, and the latest
+log tail. Logs are ANSI-stripped and redacted: known cookie values, Kaltura
+tokens, JWTs, and session identifiers never reach the browser. Cancelling a job
+terminates its subprocess tree.
+
+### Library
+
+Library scans are cached briefly and can be refreshed on demand. Books are
+grouped by format; courses show module/lesson structure. Files stream through
+the web server with HTTP range support, so large MP4s can be played or resumed.
+The web container mounts `./download` read-only.
+
+### Settings
+
+Settings shows cookie status (configured, valid, count, size, modification
+time), worker health, session details, concurrency, timezone, and path
+information. Cookie **values** are never displayed, logged, or returned by the
+API.
+
+---
+
+## Cookie setup
+
+Shelf reads two files from `./config`:
+
+| File | Used for |
+| --- | --- |
+| `cookies.json` | EPUB / PDF book downloads |
+| `cookies_full.json` | Video courses, including HttpOnly session cookies |
+
+You can add them in **Settings → Cookie files** or place them in `./config`
+manually. Files are written with mode `600`.
+
+### Book cookies (`cookies.json`)
+
+1. Sign in at <https://learning.oreilly.com>.
+2. Open DevTools → Console and run:
+
    ```js
-   JSON.stringify(document.cookie.split(';').reduce((o,c)=>{let[k,v]=c.trim().split('=');o[k]=v;return o;},{}))
+   JSON.stringify(document.cookie.split(';').reduce((o, c) => {
+     const [k, v] = c.trim().split('=');
+     o[k] = v;
+     return o;
+   }, {}))
    ```
-4. Save the output as `cookies.json` in the script directory
 
-Alternatively, use the helper:
-```sh
-python3 retrieve_cookies.py --paste
-# or auto-extract from browser:
-pip install browser_cookie3
-python3 retrieve_cookies.py -b chrome
+3. Paste the resulting JSON into Settings, or save it as
+   `config/cookies.json`.
+
+### Course cookies (`cookies_full.json`)
+
+Course playback needs HttpOnly cookies that `document.cookie` cannot expose.
+Capture them with the upstream interactive login or a browser extension that
+exports HttpOnly cookies. The upstream login requires a display:
+
+```bash
+# Writes cookies_full.json into ./config when run from the repo root.
+docker run --rm -it \
+  -w /app/output \
+  -e DISPLAY="$DISPLAY" \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v "$PWD/config":/app/output \
+  oreilly-downloader:latest login
 ```
 
-### For Courses: `cookies_full.json`
+Then paste the file contents into Settings if needed. Alternatively, run
+`./oreilly.sh login` and move the resulting `cookies_full.json` into
+`./config`.
 
-Course downloads need **full cookies** including `HttpOnly` cookies (like `groot_sessionid`, `orm-jwt`, `orm-rt`) that `document.cookie` cannot access. Use the interactive login mode:
+Cookies expire. Settings shows when each file was last updated; refresh them if
+downloads fail authentication. See [`config/README.md`](config/README.md) for
+permission details.
 
-```sh
-./oreilly.sh login
+---
+
+## Library and volumes
+
+| Host path | Container path | Access |
+| --- | --- | --- |
+| `./download` | `/app/download` (downloader) | read/write, finished library |
+| `./download` | `/downloads` (web) | read-only, streaming |
+| `./config` | `/config` (downloader) | read-only |
+| `./config` | `/config` (web) | read/write, cookie management |
+| named `downloader-data` | `/data` (downloader) | job metadata and logs |
+
+Expected output layout:
+
+```text
+download/
+├── epub/<title>.epub
+├── pdf/<title>.pdf
+└── courses/course-<id>/<module>/<lesson>.mp4
+                                  └── <lesson>.txt
 ```
 
-This opens a real Chrome browser, lets you log in, and captures all cookies into `cookies_full.json`. Requires X11 forwarding (see [Interactive Login](#login)).
+The host directories are created automatically by Compose if missing. On
+SELinux hosts, the `:z` volume labels in `docker-compose.yml` handle relabeling.
+If cookie saves fail with a permission error, set `LOCAL_UID`/`LOCAL_GID` to
+match the owner of `./config`:
 
-> **Cookies expire.** If you get authentication errors, re-extract your cookies.
-
-<br><br>
-
-## Downloading Books <a name = "downloading_books"></a>
-
-### Using the wrapper script
-
-```sh
-./oreilly.sh book -b 9780321635754 -t art-of-computer -f pdf
+```bash
+sudo chown -R "$(id -u):$(id -g)" config
 ```
 
-### Using docker run directly
+---
 
-```sh
-docker run --rm \
-  -v "$PWD/cookies.json":/app/cookies.json:ro \
-  -v "$PWD/download":/app/download \
-  oreilly-downloader:latest \
-  book -b 9780321635754 -t art-of-computer -f both
+## Security model
+
+- **No published worker port.** The downloader API exists only on the Compose
+  network. `INTERNAL_API_TOKEN` adds a second layer when set.
+- **No Docker socket.** The worker invokes the upstream entrypoint directly.
+- **Read-only web container.** Dropped capabilities, `no-new-privileges`, a
+  read-only root filesystem, and only `./config` plus a small `/tmp` writable.
+- **Cookie confidentiality.** The frontend submits cookie JSON but never reads
+  it back. Status endpoints return metadata only. Worker logs redact cookie
+  values and token-like strings.
+- **CSRF and origin checks.** State-changing requests must be same-origin, and
+  sessions use `HttpOnly`, `SameSite=Lax` cookies.
+- **Security headers.** CSP, `X-Content-Type-Options`, frame denial, and a
+  restrictive referrer policy are set by the web server.
+- **Authorized use.** The tool relies on your O'Reilly session and does not
+  circumvent DRM or entitlement checks.
+
+For internet-facing deployments, set a strong `APP_PASSWORD`, a stable
+`SESSION_SECRET`, serve over HTTPS with `COOKIE_SECURE=1`, and place the app
+behind a reverse proxy. Never commit `.env`, `./config/*.json`, or downloaded
+content; all three are covered by `.gitignore`.
+
+---
+
+## Reverse proxy and HTTPS
+
+Example Caddy configuration:
+
+```caddyfile
+shelf.example.com {
+    reverse_proxy 127.0.0.1:3000
+}
 ```
 
-| argument    | flag | explanation | example |
-| ----------- | ---- | ----------- | ------- |
-| `book id`   | `-b` | the ID of the book (found in the O'Reilly URL) | `9780321635754` |
-| `title`     | `-t` | the title of the book - no spaces | `art-of-computer` |
-| `format`    | `-f` | output format: `pdf`, `epub`, or `both` | `both` |
+Set in `.env`:
 
-Files are saved to:
-- `download/epub/<title>.epub`
-- `download/pdf/<title>.pdf`
+```dotenv
+WEB_BIND=127.0.0.1
+APP_PASSWORD=use-a-long-random-password
+SESSION_SECRET=use-a-stable-random-secret
+COOKIE_SECURE=1
+TRUST_PROXY=1
+```
 
-<br><br>
+`TRUST_PROXY=1` trusts `X-Forwarded-Proto` and `X-Forwarded-Host` for origin
+checks. Enable it only when the app is reachable exclusively through the proxy.
 
-## Downloading Courses <a name = "downloading_courses"></a>
+---
 
-### Using the wrapper script
+## Development and tests
 
-```sh
-# Download videos + transcripts
+Run the web server locally without Docker:
+
+```bash
+cd web
+PORT=3000 \
+DOWNLOADS_DIR="$PWD/../download" \
+CONFIG_DIR="$PWD/../config" \
+WORKER_URL=http://127.0.0.1:8081 \
+APP_PASSWORD=test \
+node server/index.js
+```
+
+Run the tests:
+
+```bash
+cd web && npm test
+
+cd ..
+python3 -m unittest discover -s downloader -p 'test_*.py' -v
+```
+
+The Node suite covers auth, CSRF, cookie handling without value leakage,
+library traversal protection, range requests, and API routing. The Python suite
+uses a mock CLI to exercise queueing, progress parsing, redaction,
+cancellation, and worker lifecycle. The tests do not need Docker or real
+cookies.
+
+Node 22+ is required for the web app. Python 3.10+ is recommended for the
+worker tests.
+
+---
+
+## CLI usage
+
+The upstream CLI remains available independently of the web UI.
+
+### Build the image
+
+```bash
+docker build -t oreilly-downloader:latest .
+```
+
+The image is based on `kirinnee/orly:latest` and includes Chromium, ffmpeg,
+calibre, Playwright, and the upstream downloader scripts.
+
+### Download a book
+
+```bash
+./oreilly.sh book -b 9780321635754 -t art-of-computer -f both
+```
+
+| Argument | Flag | Values |
+| --- | --- | --- |
+| Book ID | `-b` | numeric ID from the O'Reilly URL |
+| Title | `-t` | filesystem-safe title, no spaces |
+| Format | `-f` | `pdf`, `epub`, or `both` |
+
+Output: `download/epub/<title>.epub` and `download/pdf/<title>.pdf`.
+
+### Download a course
+
+```bash
 ./oreilly.sh course "https://learning.oreilly.com/course/building-ai-agents/0642572077884/"
 
-# Download transcripts only (no video files)
+# Transcripts only
 ./oreilly.sh course "https://learning.oreilly.com/course/building-ai-agents/0642572077884/" --transcripts-only
 ```
 
-### Using docker run directly
+Courses are saved under `download/courses/course-<id>/<module>/<lesson>.mp4`.
+Existing non-zero video files are skipped, so re-running a course resumes a
+partial download. The downloader refreshes Kaltura tokens periodically and
+retries transient TLS/EOF failures.
 
-```sh
-docker run --rm \
-  -v "$PWD/cookies_full.json":/app/cookies_full.json:ro \
-  -v "$PWD/download":/app/download \
-  oreilly-downloader:latest \
-  course "https://learning.oreilly.com/course/building-ai-agents/0642572077884/"
-```
+When using the CLI directly, cookies live in the repository root
+(`./cookies.json`, `./cookies_full.json`) rather than `./config`. The wrapper
+mounts them automatically.
 
-### How it works
+### Upstream interactive login
 
-1. Launches headless Chromium with your cookies
-2. Scrapes the course page to extract modules and lesson video URLs
-3. For each lesson:
-   - Queries the O'Reilly VideoClip API for metadata + transcripts
-   - Gets a Kaltura session token
-   - Resolves the HLS `.m3u8` stream URL via Kaltura's API
-   - Downloads the video with `ffmpeg`
-   - Saves the transcript as `.txt`
-4. Organizes output as `download/courses/course-<id>/<module>/<lesson>.mp4`
-
-### Resume behavior
-
-The downloader skips videos that already exist with non-zero file size. If a download fails, it refreshes the Kaltura session token and retries. You can re-run the same command to resume a partial download.
-
-### Kaltura session refresh
-
-The Kaltura `ks` token has a limited lifetime. The downloader automatically:
-- Refreshes the token every 5 minutes
-- Refreshes on failure and retries with the new token
-- Retries ffmpeg on transient TLS/EOF errors (up to 2 retries)
-
-<br><br>
-
-## Interactive Login (Full Cookies) <a name = "login"></a>
-
-Course downloads require `cookies_full.json` with `HttpOnly` cookies. The interactive login mode opens a real browser:
-
-```sh
-# On Linux with X11:
+```bash
 ./oreilly.sh login
-
-# Or with docker run:
-docker run --rm \
-  -e DISPLAY=$DISPLAY \
-  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
-  -v "$PWD":/app/output \
-  oreilly-downloader:latest \
-  login
 ```
 
-This opens Chrome, you log in to O'Reilly, and it captures all cookies (including `HttpOnly` ones) into `cookies_full.json`.
+This requires an X11 display and writes `cookies_full.json` into the repository
+root. See [Cookie setup](#cookie-setup) for the container command that writes
+directly into `./config`.
 
-<br><br>
+---
 
-## Building the Docker Image <a name = "building"></a>
+## Troubleshooting
 
-```sh
-docker build -t oreilly-downloader:latest .
+### The UI loads but says the worker is offline
+
+```bash
+docker compose ps
+docker compose logs downloader
 ```
 
-The image is based on `kirinnee/orly:latest` (Debian 12 / Bookworm) and includes:
-- **Chromium** — headless browser for Playwright (course page scraping)
-- **ffmpeg** — HLS video download
-- **calibre** (`ebook-convert`) — EPUB to PDF conversion
-- **Playwright + requests** — Python browser automation and API calls
-- **safaribooks-v2.py** — book download via O'Reilly API v2 with cookie auth
+The web container waits for the downloader health check before starting. A
+worker that keeps restarting usually indicates a missing image or a permissions
+problem on `./download`.
 
-The image is ~4 GB. Build time is ~5-10 minutes depending on network speed.
+### Cookies cannot be saved
 
-<br><br>
+The web container runs as `LOCAL_UID:LOCAL_GID` and must own `./config`:
 
-## Troubleshooting <a name = "troubleshooting"></a>
+```bash
+sudo chown -R "$(id -u):$(id -g)" config
+```
 
-### SSL error: `UNEXPECTED_EOF_WHILE_READING`
+or update `LOCAL_UID` / `LOCAL_GID` in `.env` and restart.
 
-O'Reilly is fronted by Akamai, which can close TLS handshakes to `learning.oreilly.com`. The Docker image uses Debian 12's OpenSSL 3.0.x which is compatible. If you still see this error:
+### Login fails or downloads report authentication errors
 
-- Wait 15-30 minutes — Akamai may be temporarily rate-limiting your IP
-- Re-extract your cookies — they may have expired
-- Try from a different network/VPN
+Cookies have likely expired. Re-export them, update Settings, and retry the job.
+O'Reilly no longer supports programmatic username/password login.
 
-### Akamai IP block (connection timeout)
+### `UNEXPECTED_EOF_WHILE_READING` or Akamai timeouts
 
-If you've downloaded a lot of content in a short time, Akamai may temporarily block your IP. Symptoms:
-- TCP connects but TLS handshake times out
-- `ERR_CONNECTION_CLOSED` in Playwright
-- `000` status from curl
+O'Reilly sits behind Akamai, which can close TLS handshakes or temporarily rate
+limit an IP. Wait 15–60 minutes, refresh cookies, or try a different network.
+The downloader image uses Debian 12's OpenSSL 3.0.x for compatibility.
 
-**Fix:** Wait 15-60 minutes for the block to expire, or use a VPN.
+### Course video fails repeatedly
 
-### Login fails / authentication error
-
-O'Reilly blocked username/password programmatic login. You must use [cookie-based authentication](#cookie_auth). If it still fails, your cookies have likely expired — re-extract them.
+- Re-run the job; completed videos are skipped.
+- Confirm `cookies_full.json` is present and recent.
+- Verify ffmpeg inside the image:
+  `docker run --rm --entrypoint ffmpeg oreilly-downloader:latest -version`.
 
 ### "download failed - the epub is empty or invalid"
 
-The download did not complete. Check the docker output above the error. Most commonly this is expired cookies or an incorrect book ID.
+Usually expired cookies or an incorrect book ID. Check the job log, refresh
+cookies, and retry.
 
-### Course video fails with TLS/EOF errors
+### First build is slow or runs out of disk
 
-The Kaltura session token may have expired. The downloader automatically refreshes it and retries. If failures persist:
-- Re-run the command — existing videos are skipped
-- Check that `cookies_full.json` is still valid
-- Ensure ffmpeg is working (`docker run --rm --entrypoint ffmpeg oreilly-downloader:latest -version`)
+The downloader image is ~4 GB and includes Chromium, calibre, and ffmpeg. Allow
+at least 10 GB of free space for images, downloads, and build cache. The web
+image itself is small.
 
-### `cookies_full.json` not found
+### Sessions reset after every restart
 
-Course downloads need full cookies including `HttpOnly` session cookies. Run `./oreilly.sh login` to capture them. See [Interactive Login](#login).
+Set `SESSION_SECRET` in `.env`. Without it, the server generates a random secret
+at startup.
 
-<br><br>
+---
 
-## Acknowledgment <a name = "special_thanks"></a>
+## Project layout
 
-- [Kirin nee](https://github.com/kirinnee) — [base Docker image](https://github.com/kirinnee/oreilly-downloader)
-- [Calibre Project](https://calibre-ebook.com/get-involved)
-- [lorenzodifuccia/safaribooks](https://github.com/lorenzodifuccia/safaribooks) — the underlying book downloader
-- [sohailnajar/safaribooks](https://github.com/lorenzodifuccia/safaribooks/pull/377) — v2 API migration and cookie-auth fix
+```text
+.
+├── docker-compose.yml        # web + downloader services, volumes, healthchecks
+├── .env.example              # configuration template
+├── Dockerfile                # upstream downloader image + worker adapter
+├── downloader/
+│   ├── worker.py             # internal queue/API adapter around the CLI
+│   └── test_*.py             # mock-CLI worker tests
+├── web/
+│   ├── Dockerfile            # Node 22 Alpine image
+│   ├── server/               # zero-dependency HTTP API, auth, cookies, library
+│   ├── public/               # vanilla ES modules, CSS, fonts, favicon
+│   └── test/                 # Node test suite
+├── config/                   # cookie files (gitignored), shared with containers
+└── download/                 # finished library (gitignored)
+```
 
-<br>
+The original upstream scripts (`docker-entrypoint.sh`,
+`oreilly-course-downloader.py`, `safaribooks-v2.py`, and related files) are
+kept as-is.
 
-## Authors <a name = "authors"></a>
+---
 
-- [@benriemer](https://github.com/benriemer)
+## Acknowledgments
+
+- [Kirin nee](https://github.com/kirinnee) — base Docker image
+- [Calibre](https://calibre-ebook.com/get-involved)
+- [lorenzodifuccia/safaribooks](https://github.com/lorenzodifuccia/safaribooks)
+  — underlying book downloader
+- [sohailnajar/safaribooks](https://github.com/lorenzodifuccia/safaribooks/pull/377)
+  — v2 API migration and cookie-auth fix
+
+## Author
+
+[@benriemer](https://github.com/benriemer)
+
+## License
+
+See [`LICENSE`](LICENSE).

@@ -66,8 +66,9 @@ if [[ "$COMMAND" == "help" || "$COMMAND" == "--help" || "$COMMAND" == "-h" ]]; t
     exit 0
 fi
 
-# Check cookies exist for actual commands
-if [[ ! -f "$COOKIES" && ! -f "$COOKIES_FULL" ]]; then
+# Login creates cookies, so it must run before the cookie guard.
+# Book and course downloads still require at least one cookie file.
+if [[ "$COMMAND" != "login" && ! -f "$COOKIES" && ! -f "$COOKIES_FULL" ]]; then
     echo "Error: No cookies file found."
     echo "  Mount cookies.json (for books) or cookies_full.json (for courses) into /app/"
     echo ""
